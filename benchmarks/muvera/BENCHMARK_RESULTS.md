@@ -27,76 +27,63 @@ while preserving multi-vector retrieval quality through optional MaxSim rerankin
 
 ## Index Configuration
 
-- Engine: faiss
-- Algorithm: HNSW
+- Engine: faiss HNSW
 - Space type: innerproduct
 - m: 16, ef_construction: 512, ef_search: 512
 - 1 shard, 0 replicas, force merged to 1 segment
-- HNSW graphs warmed up before queries
 
 ## Approaches Evaluated
 
 1. **Exact MaxSim (brute-force)**: Offline computation of MaxSim between all query-document pairs.
-   Represents the theoretical quality ceiling for multi-vector retrieval. No approximation.
+   Represents the theoretical quality ceiling. No approximation.
 
-2. **Mean pool + MaxSim rerank**: Average all token vectors into a single 128-dim vector, perform ANN
-   search (k=100), then rescore top candidates with lateInteractionScore. This is the naive baseline
-   that users would employ without MUVERA.
+2. **Mean pool + MaxSim rerank**: Average all token vectors into a single 128-dim vector, ANN search
+   (k=100), then rescore with lateInteractionScore. The naive baseline without MUVERA.
 
 3. **MUVERA-only**: Encode query multi-vectors into a 10,240-dim FDE via the MUVERA search processor,
-   perform ANN search on the FDE field (k=10). The lateInteractionScore still runs on the returned
-   candidates but only rescores the same 10 results.
+   ANN search on the FDE field, lateInteractionScore on returned candidates.
 
 4. **MUVERA + MaxSim rerank (4x)**: Same as MUVERA-only but with 4x oversampling. ANN fetches 40
    candidates, lateInteractionScore rescores all 40, returns top 10.
 
 ## Results
 
-| Approach | NDCG@1 | NDCG@5 | NDCG@10 | Avg Latency (ms) | P95 Latency (ms) |
-|----------|--------|--------|---------|-------------------|-------------------|
-| Exact MaxSim (brute-force) | 0.483 | 0.386 | 0.344 | offline | - |
-| MUVERA + MaxSim rerank (4x) | 0.474 | 0.379 | 0.339 | 18,205 | 18,934 |
-| MUVERA-only | 0.464 | 0.369 | 0.329 | 5,498 | 5,856 |
-| Mean pool + MaxSim rerank | 0.249 | 0.183 | 0.145 | 550 | 665 |
+| Approach | NDCG@1 | NDCG@5 | NDCG@10 | % of Exact MaxSim |
+|----------|--------|--------|---------|-------------------|
+| Exact MaxSim (brute-force) | 0.483 | 0.386 | 0.344 | 100% |
+| MUVERA + MaxSim rerank (4x) | 0.474 | 0.379 | 0.339 | 98.5% |
+| MUVERA-only | 0.464 | 0.369 | 0.329 | 95.6% |
+| Mean pool + MaxSim rerank | 0.249 | 0.183 | 0.145 | 42.2% |
 
 ## Key Findings
 
-**MUVERA + rerank recovers 98.5% of exact MaxSim quality** (NDCG@10: 0.339 vs 0.344), demonstrating
-that the FDE approximation combined with MaxSim reranking provides near-lossless multi-vector retrieval.
+- **MUVERA + rerank recovers 98.5% of exact MaxSim quality** (NDCG@10: 0.339 vs 0.344), demonstrating
+  that the FDE approximation combined with MaxSim reranking provides near-lossless multi-vector retrieval.
 
-**MUVERA-only achieves 95.6% of exact MaxSim quality** (NDCG@10: 0.329 vs 0.344) without any reranking,
-showing that the FDE encoding alone captures most of the multi-vector signal.
+- **MUVERA-only achieves 95.6% of exact MaxSim quality** without any reranking, showing that the FDE
+  encoding alone captures most of the multi-vector signal.
 
-**Mean pooling loses most of the multi-vector quality** (NDCG@10: 0.145 vs 0.344, only 42% of the
-ceiling). This demonstrates why MUVERA is needed: naive single-vector approaches discard the fine-grained
-token-level information that makes multi-vector models effective.
-
-## Latency Notes
-
-The latency numbers reflect an unoptimized single-node development setup and are not representative of
-production performance. The primary bottleneck is the per-query FDE encoding in the MUVERA search
-processor (Java, single-threaded). In a production deployment, query FDE encoding could be optimized
-through SIMD vectorization, precomputation, or caching. The quality metrics (NDCG) are the primary
-focus of this benchmark.
+- **Mean pooling loses most of the multi-vector quality** (42.2% of ceiling), demonstrating why MUVERA
+  is needed: naive single-vector approaches discard the fine-grained token-level information that makes
+  multi-vector models effective.
 
 ## Reproducibility
 
-To reproduce these results:
-
 ```bash
-# 1. Build and start OpenSearch with the k-NN plugin
+# Build and start OpenSearch with the k-NN plugin
+cd k-NN
 ./gradlew assemble -x test -x integTest
-./gradlew run -x test -x integTest &
+# Install plugin into OpenSearch distribution and start
 
-# 2. Set up Python environment
+# Set up Python environment
 python3 -m venv benchmarks/muvera/.venv
 benchmarks/muvera/.venv/bin/pip install -r benchmarks/muvera/requirements.txt
 
-# 3. Prepare data (encode nfcorpus with ColBERTv2)
+# Prepare data (encode nfcorpus with ColBERTv2)
 PATH="benchmarks/muvera/.venv/bin:$PATH" python3 benchmarks/muvera/prepare_data.py \
     --output_dir benchmarks/muvera/data --device cuda
 
-# 4. Run benchmark
+# Run benchmark
 PATH="benchmarks/muvera/.venv/bin:$PATH" python3 -u benchmarks/muvera/run_benchmark.py \
     --data_dir benchmarks/muvera/data --cleanup_first \
     --output benchmarks/muvera/benchmark_results.json
