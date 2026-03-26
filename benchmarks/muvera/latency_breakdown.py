@@ -101,7 +101,75 @@ for _ in range(5):
     times.append(time.time() - start)
 print(f"  Mean+rescore (5 runs): avg={np.mean(times)*1000:.1f}ms, p50={np.percentile(times,50)*1000:.1f}ms")
 
+# Step 6: Precomputed FDE + KNN + lateInteraction (no search processor)
+# This is what Qdrant measures: client encodes FDE, DB does KNN + rerank
+print("\n--- Step 6: Precomputed FDE + KNN + lateInteraction (Qdrant-comparable) ---")
+# Encode FDE client-side using same algorithm as Python test
+# Encode FDE client-side using same algorithm
+DIM,K_SIM,DIM_PROJ,R_REPS=128,5,16,20
+NP=1<<K_SIM
+rng_enc=np.random.RandomState(42)
+sh=rng_enc.randn(R_REPS,K_SIM*DIM)
+dr=np.where(rng_enc.randint(0,2,size=(R_REPS,DIM,DIM_PROJ))==1,1.0,-1.0)
+
+def encode_query_fde(vecs):
+    out=np.zeros(R_REPS*NP*DIM_PROJ,dtype=np.float32)
+    s=1/np.sqrt(DIM_PROJ); o=0
+    for r in range(R_REPS):
+        c=np.zeros((NP,DIM))
+        for v in vecs:
+            cid=0
+            for k in range(K_SIM):
+                if np.dot(v,sh[r,k*DIM:(k+1)*DIM])>0: cid|=(1<<k)
+            c[cid]+=v
+        for ci in range(NP): out[o:o+DIM_PROJ]=s*(c[ci]@dr[r]); o+=DIM_PROJ
+    return out
+
+q_arr = np.array(q_emb)
+precomputed_fde = encode_query_fde(q_arr).tolist()
+
+# 6a: KNN on precomputed FDE only (MUVERA-only equivalent, no processor)
+print("  6a: Precomputed FDE KNN only (k=10, no lateInteraction):")
+times = []
+for _ in range(10):
+    start = time.time()
+    client.transport.perform_request("POST", f"/{INDEX_NAME}/_search",
+        body={"size": 10, "query": {"knn": {"muvera_fde": {"vector": precomputed_fde, "k": 10}}},
+              "_source": False})
+    times.append(time.time() - start)
+print(f"      avg={np.mean(times)*1000:.1f}ms, p50={np.percentile(times,50)*1000:.1f}ms")
+
+# 6b: KNN on precomputed FDE + lateInteraction rerank (k=10)
+print("  6b: Precomputed FDE KNN (k=10) + lateInteraction on 10 docs:")
+times = []
+for _ in range(5):
+    start = time.time()
+    client.transport.perform_request("POST", f"/{INDEX_NAME}/_search",
+        body={"size": 10, "query": {"script_score": {
+                "query": {"knn": {"muvera_fde": {"vector": precomputed_fde, "k": 10}}},
+                "script": {"source": "lateInteractionScore(params.query_vectors, 'colbert_vectors', params._source, params.space_type)",
+                           "params": {"query_vectors": q_emb, "space_type": "innerproduct"}}}},
+              "_source": {"excludes": ["muvera_fde", "mean_vector"]}})
+    times.append(time.time() - start)
+print(f"      avg={np.mean(times)*1000:.1f}ms, p50={np.percentile(times,50)*1000:.1f}ms")
+
+# 6c: KNN on precomputed FDE + lateInteraction rerank (k=40, 4x oversample)
+print("  6c: Precomputed FDE KNN (k=40) + lateInteraction on 40 docs:")
+times = []
+for _ in range(5):
+    start = time.time()
+    client.transport.perform_request("POST", f"/{INDEX_NAME}/_search",
+        body={"size": 10, "query": {"script_score": {
+                "query": {"knn": {"muvera_fde": {"vector": precomputed_fde, "k": 40}}},
+                "script": {"source": "lateInteractionScore(params.query_vectors, 'colbert_vectors', params._source, params.space_type)",
+                           "params": {"query_vectors": q_emb, "space_type": "innerproduct"}}}},
+              "_source": {"excludes": ["muvera_fde", "mean_vector"]}})
+    times.append(time.time() - start)
+print(f"      avg={np.mean(times)*1000:.1f}ms, p50={np.percentile(times,50)*1000:.1f}ms")
+
 print("\n--- Summary ---")
 print("Pure KNN on FDE = ANN search cost only (no encoding, no scoring)")
 print("MUVERA-only - Pure KNN = FDE encoding + lateInteraction on 10 docs")
 print("MUVERA+rerank - MUVERA-only = extra lateInteraction on 30 more docs")
+print("\nQdrant-comparable (Step 6): client-side FDE encoding, server does KNN + rerank only")
+print("  Qdrant reported: MUVERA-only 150ms, MUVERA+rerank 180ms")
