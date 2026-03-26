@@ -126,18 +126,28 @@ def compute_maxsim(query_emb, doc_emb):
     return float(np.sum(np.max(sim_matrix, axis=1)))
 
 
-def compute_ground_truth(query_ids, query_embeddings, doc_ids, doc_embeddings):
-    """Compute brute-force MaxSim rankings for all queries."""
-    print("Computing brute-force MaxSim ground truth...")
+def compute_ground_truth(query_ids, query_embeddings, doc_ids, doc_embeddings, device="cpu"):
+    """Compute brute-force MaxSim rankings for all queries using torch (GPU-accelerated)."""
+    print(f"Computing brute-force MaxSim ground truth on {device}...")
     ground_truth = {}
 
+    # Pre-pad all doc embeddings into a batch for GPU efficiency
+    # Each doc has variable number of tokens, so we process per-query
+    dev = torch.device(device)
+
+    # Pre-convert all doc embeddings to tensors
+    doc_tensors = {}
+    for did in doc_ids:
+        doc_tensors[did] = torch.tensor(doc_embeddings[did], dtype=torch.float32, device=dev)
+
     for qid in tqdm(query_ids, desc="MaxSim ground truth"):
-        q_emb = query_embeddings[qid]
+        q = torch.tensor(query_embeddings[qid], dtype=torch.float32, device=dev)  # (nq, dim)
         scores = []
         for did in doc_ids:
-            score = compute_maxsim(q_emb, doc_embeddings[did])
+            d = doc_tensors[did]  # (nd, dim)
+            sim = q @ d.T  # (nq, nd)
+            score = float(sim.max(dim=1).values.sum().cpu())
             scores.append((did, score))
-
         scores.sort(key=lambda x: x[1], reverse=True)
         ground_truth[qid] = scores
 
@@ -201,7 +211,7 @@ def main():
     doc_ids, doc_embeddings = encode_documents(checkpoint, corpus, args.batch_size, args.device)
     query_ids, query_embeddings = encode_queries(checkpoint, queries, args.device)
 
-    ground_truth = compute_ground_truth(query_ids, query_embeddings, doc_ids, doc_embeddings)
+    ground_truth = compute_ground_truth(query_ids, query_embeddings, doc_ids, doc_embeddings, device=args.device)
 
     save_data(args.output_dir, corpus, queries, qrels, doc_ids, doc_embeddings,
               query_ids, query_embeddings, ground_truth)
