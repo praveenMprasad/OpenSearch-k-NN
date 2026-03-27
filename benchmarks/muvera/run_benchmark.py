@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 MUVERA_PARAMS = {"dim": 128, "k_sim": 5, "dim_proj": 16, "r_reps": 20}
 FDE_DIM = MUVERA_PARAMS["r_reps"] * (2 ** MUVERA_PARAMS["k_sim"]) * MUVERA_PARAMS["dim_proj"]
-INDEX_NAME = "muvera-benchmark-nfcorpus"
+INDEX_NAME = "muvera-benchmark"
 INGEST_PIPELINE = "muvera-ingest-benchmark"
 SEARCH_PIPELINE = "muvera-search-benchmark"
 
@@ -221,6 +221,7 @@ def cleanup(client):
 def main():
     parser = argparse.ArgumentParser(description="Run MUVERA benchmark on OpenSearch")
     parser.add_argument("--data_dir", type=str, default="./data")
+    parser.add_argument("--dataset", type=str, default="nfcorpus", help="Dataset name for index naming")
     parser.add_argument("--host", type=str, default="localhost")
     parser.add_argument("--port", type=int, default=9200)
     parser.add_argument("--username", type=str, default=None)
@@ -233,6 +234,8 @@ def main():
     args = parser.parse_args()
 
     print("Loading prepared data...")
+    global INDEX_NAME
+    INDEX_NAME = f"muvera-benchmark-{args.dataset}"
     with open(os.path.join(args.data_dir, "doc_embeddings.json")) as f: doc_data = json.load(f)
     with open(os.path.join(args.data_dir, "query_embeddings.json")) as f: query_data = json.load(f)
     with open(os.path.join(args.data_dir, "qrels.json")) as f: qrels = json.load(f)

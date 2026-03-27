@@ -22,18 +22,17 @@ import torch
 from tqdm import tqdm
 
 
-def download_nfcorpus(data_dir):
-    """Download nfcorpus using BeIR."""
+def download_dataset(data_dir, dataset="nfcorpus"):
+    """Download a BeIR dataset."""
     from beir import util as beir_util
     from beir.datasets.data_loader import GenericDataLoader
 
-    dataset = "nfcorpus"
     url = f"https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/{dataset}.zip"
     download_path = os.path.join(data_dir, "datasets")
     data_path = beir_util.download_and_unzip(url, download_path)
 
     corpus, queries, qrels = GenericDataLoader(data_folder=data_path).load(split="test")
-    print(f"Loaded nfcorpus: {len(corpus)} docs, {len(queries)} queries, {len(qrels)} qrels")
+    print(f"Loaded {dataset}: {len(corpus)} docs, {len(queries)} queries, {len(qrels)} qrels")
     return corpus, queries, qrels
 
 
@@ -199,13 +198,14 @@ def save_data(output_dir, corpus, queries, qrels, doc_ids, doc_embeddings,
 def main():
     parser = argparse.ArgumentParser(description="Prepare nfcorpus data for MUVERA benchmark")
     parser.add_argument("--output_dir", type=str, default="./data", help="Output directory")
+    parser.add_argument("--dataset", type=str, default="nfcorpus", help="BeIR dataset name (e.g. nfcorpus, scifact)")
     parser.add_argument("--device", type=str, default="cpu", help="Device for encoding (cpu/cuda/mps)")
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size for encoding")
     args = parser.parse_args()
 
     start = time.time()
 
-    corpus, queries, qrels = download_nfcorpus(args.output_dir)
+    corpus, queries, qrels = download_dataset(args.output_dir, args.dataset)
     checkpoint = load_colbert_model(device=args.device)
 
     doc_ids, doc_embeddings = encode_documents(checkpoint, corpus, args.batch_size, args.device)
