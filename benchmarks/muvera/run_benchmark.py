@@ -192,7 +192,7 @@ def print_results(all_results):
     print("MUVERA Benchmark Results - nfcorpus + ColBERTv2")
     print(f"MUVERA params: k_sim={MUVERA_PARAMS['k_sim']}, dim_proj={MUVERA_PARAMS['dim_proj']}, "
           f"r_reps={MUVERA_PARAMS['r_reps']}, FDE dim={FDE_DIM}")
-    print(f"HNSW: m=16, ef_construction=512, ef_search=512")
+    print(f"HNSW: m=16, ef_construction=512, ef_search={MUVERA_PARAMS.get('ef_search', 512)}")
     print("=" * 95)
     hdr = f"{'Approach':<35} {'NDCG@1':>8} {'NDCG@5':>8} {'NDCG@10':>8} {'Avg(ms)':>10} {'P95(ms)':>10}"
     print(hdr)
@@ -226,6 +226,8 @@ def main():
     parser.add_argument("--username", type=str, default=None)
     parser.add_argument("--password", type=str, default=None)
     parser.add_argument("--size", type=int, default=10)
+    parser.add_argument("--ef_search", type=int, default=512)
+    parser.add_argument("--skip_setup", action="store_true", help="Skip index creation/indexing, just run queries")
     parser.add_argument("--cleanup_first", action="store_true")
     parser.add_argument("--output", type=str, default="./benchmark_results.json")
     args = parser.parse_args()
@@ -244,11 +246,20 @@ def main():
     info = client.info()
     print(f"Connected to OpenSearch {info['version']['number']}")
     if args.cleanup_first: cleanup(client)
-    setup_ingest_pipeline(client)
-    create_index(client)
-    for osf in [1, 4]: setup_search_pipeline(client, osf)
-    index_time = index_documents(client, doc_data)
-    warmup_cache(client)
+    if args.skip_setup:
+        # Just update ef_search on existing index
+        client.indices.put_settings(index=INDEX_NAME, body={"index.knn.algo_param.ef_search": args.ef_search})
+        print(f"Set ef_search={args.ef_search} on existing index")
+        warmup_cache(client)
+        index_time = 0
+    else:
+        setup_ingest_pipeline(client)
+        create_index(client)
+        for osf in [1, 4]: setup_search_pipeline(client, osf)
+        index_time = index_documents(client, doc_data)
+        client.indices.put_settings(index=INDEX_NAME, body={"index.knn.algo_param.ef_search": args.ef_search})
+        print(f"Set ef_search={args.ef_search}")
+        warmup_cache(client)
 
     all_results.append(run_os_benchmark(client, "Mean pool + MaxSim rerank",
         lambda c, emb, sz: run_mean_pool_rerank_query(c, emb, sz, prefetch_k=100),
