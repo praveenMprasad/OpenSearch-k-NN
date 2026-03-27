@@ -2,18 +2,10 @@
 
 ## Overview
 
-This benchmark evaluates the MUVERA (Multi-Vector Retrieval via Fixed Dimensional Encodings) processors
-for OpenSearch on the BeIR nfcorpus dataset using ColBERTv2 multi-vector embeddings.
-
-MUVERA converts variable-length multi-vector representations into fixed-size single vectors (FDE) that
-approximate MaxSim scoring via dot product. This enables fast ANN retrieval on standard knn_vector fields
-while preserving multi-vector retrieval quality through optional MaxSim reranking.
-
-## Dataset
-
-- **BeIR nfcorpus**: 3,633 documents, 323 test queries with human-annotated relevance judgments
-- **Embedding model**: ColBERTv2 (128-dimensional token vectors)
-- **Metric**: NDCG@1, NDCG@5, NDCG@10 against BeIR qrels
+This benchmark evaluates the MUVERA processors for OpenSearch on two BeIR datasets
+using ColBERTv2 multi-vector embeddings. MUVERA converts variable-length multi-vector
+representations into fixed-size single vectors (FDE) that approximate MaxSim scoring,
+enabling fast ANN retrieval while preserving multi-vector quality.
 
 ## MUVERA Parameters
 
@@ -27,26 +19,11 @@ while preserving multi-vector retrieval quality through optional MaxSim rerankin
 
 ## Index Configuration
 
-- Engine: faiss HNSW
-- Space type: innerproduct
+- Engine: faiss HNSW, space type: innerproduct
 - m: 16, ef_construction: 512, ef_search: 512
 - 1 shard, 0 replicas, force merged to 1 segment
 
-## Approaches Evaluated
-
-1. **Exact MaxSim (brute-force)**: Offline computation of MaxSim between all query-document pairs.
-   Represents the theoretical quality ceiling. No approximation.
-
-2. **Mean pool + MaxSim rerank**: Average all token vectors into a single 128-dim vector, ANN search
-   (k=100), then rescore with lateInteractionScore. The naive baseline without MUVERA.
-
-3. **MUVERA-only**: Encode query multi-vectors into a 10,240-dim FDE via the MUVERA search processor,
-   ANN search on the FDE field, lateInteractionScore on returned candidates.
-
-4. **MUVERA + MaxSim rerank (4x)**: Same as MUVERA-only but with 4x oversampling. ANN fetches 40
-   candidates, lateInteractionScore rescores all 40, returns top 10.
-
-## Results
+## Results: nfcorpus (3,633 docs, 323 queries)
 
 | Approach | NDCG@1 | NDCG@5 | NDCG@10 | % of Exact MaxSim |
 |----------|--------|--------|---------|-------------------|
@@ -55,36 +32,41 @@ while preserving multi-vector retrieval quality through optional MaxSim rerankin
 | MUVERA-only | 0.464 | 0.369 | 0.329 | 95.6% |
 | Mean pool + MaxSim rerank | 0.249 | 0.183 | 0.145 | 42.2% |
 
+## Results: SciFact (5,183 docs, 300 queries)
+
+| Approach | NDCG@1 | NDCG@5 | NDCG@10 | % of Exact MaxSim |
+|----------|--------|--------|---------|-------------------|
+| Exact MaxSim (brute-force) | 0.597 | 0.674 | 0.692 | 100% |
+| MUVERA + MaxSim rerank (4x) | 0.600 | 0.670 | 0.683 | 98.7% |
+| MUVERA-only | 0.597 | 0.665 | 0.679 | 98.1% |
+| Mean pool + MaxSim rerank | 0.360 | 0.369 | 0.373 | 53.9% |
+
 ## Key Findings
 
-- **MUVERA + rerank recovers 98.5% of exact MaxSim quality** (NDCG@10: 0.339 vs 0.344), demonstrating
-  that the FDE approximation combined with MaxSim reranking provides near-lossless multi-vector retrieval.
-
-- **MUVERA-only achieves 95.6% of exact MaxSim quality** without any reranking, showing that the FDE
-  encoding alone captures most of the multi-vector signal.
-
-- **Mean pooling loses most of the multi-vector quality** (42.2% of ceiling), demonstrating why MUVERA
-  is needed: naive single-vector approaches discard the fine-grained token-level information that makes
-  multi-vector models effective.
+- **MUVERA + rerank recovers 98-99% of exact MaxSim quality** across both datasets.
+- **MUVERA-only achieves 96-98%** without any reranking, showing the FDE encoding
+  alone captures most of the multi-vector signal.
+- **Mean pooling retains only 42-54%** of quality, demonstrating why MUVERA is needed:
+  naive single-vector approaches discard fine-grained token-level information.
+- On SciFact, MUVERA-only NDCG@1 ties exact MaxSim (0.597), and MUVERA+rerank
+  slightly exceeds it (0.600) due to the oversampling effect.
 
 ## Reproducibility
 
 ```bash
 # Build and start OpenSearch with the k-NN plugin
-cd k-NN
-./gradlew assemble -x test -x integTest
-# Install plugin into OpenSearch distribution and start
+cd k-NN && ./gradlew assemble -x test -x integTest
 
 # Set up Python environment
 python3 -m venv benchmarks/muvera/.venv
 benchmarks/muvera/.venv/bin/pip install -r benchmarks/muvera/requirements.txt
 
-# Prepare data (encode nfcorpus with ColBERTv2)
+# Prepare data
 PATH="benchmarks/muvera/.venv/bin:$PATH" python3 benchmarks/muvera/prepare_data.py \
-    --output_dir benchmarks/muvera/data --device cuda
+    --output_dir benchmarks/muvera/data --dataset nfcorpus --device cuda
 
 # Run benchmark
 PATH="benchmarks/muvera/.venv/bin:$PATH" python3 -u benchmarks/muvera/run_benchmark.py \
-    --data_dir benchmarks/muvera/data --cleanup_first \
+    --data_dir benchmarks/muvera/data --dataset nfcorpus --cleanup_first \
     --output benchmarks/muvera/benchmark_results.json
 ```
