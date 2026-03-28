@@ -273,6 +273,38 @@ def run_pure_fde_query(client, query_embeddings, size=20):
               "_source": False})
 
 
+def run_fde_with_client_rerank(client, query_embeddings, size=20, prefetch_k=80):
+    """Client-side FDE ANN + client-side MaxSim rerank.
+    1. Encode FDE client-side
+    2. KNN fetch prefetch_k candidates (with colbert_vectors)
+    3. Compute MaxSim client-side on candidates
+    4. Return top size results
+    """
+    fde = encode_query_fde_client(query_embeddings)
+    response = client.transport.perform_request("POST", f"/{INDEX_NAME}/_search",
+        body={"size": prefetch_k,
+              "query": {"knn": {"muvera_fde": {"vector": fde, "k": prefetch_k}}},
+              "_source": {"includes": ["colbert_vectors"]}})
+
+    q = np.array(query_embeddings)
+    hits = response.get("hits", {}).get("hits", [])
+    scored = []
+    for hit in hits:
+        doc_vecs = hit.get("_source", {}).get("colbert_vectors", [])
+        if not doc_vecs:
+            scored.append((hit["_id"], hit["_score"]))
+            continue
+        d = np.array(doc_vecs)
+        sim = q @ d.T  # (nq, nd)
+        maxsim = float(sim.max(axis=1).sum())
+        scored.append((hit["_id"], maxsim))
+
+    scored.sort(key=lambda x: x[1], reverse=True)
+    # Rebuild response format
+    reranked_hits = [{"_id": did, "_score": score} for did, score in scored[:size]]
+    return {"hits": {"hits": reranked_hits}}
+
+
 def run_os_benchmark(client, config_name, query_fn, query_data, qrels,
                      size=20, k_values=(1, 5, 10, 20)):
     """Run benchmark and compute Recall@K."""
@@ -466,8 +498,14 @@ def main():
         query_data, qrels, size=args.size))
     with open(args.output, "w") as f: json.dump(all_results, f, indent=2)
 
-    # Config 3: MUVERA + MaxSim rerank (4x oversample)
-    all_results.append(run_os_benchmark(client, "MUVERA + rerank (4x)",
+    # Config 3: MUVERA FDE + client-side MaxSim rerank (4x)
+    all_results.append(run_os_benchmark(client, "MUVERA + client rerank (4x)",
+        lambda c, emb, sz: run_fde_with_client_rerank(c, emb, sz, prefetch_k=sz * 4),
+        query_data, qrels, size=args.size))
+    with open(args.output, "w") as f: json.dump(all_results, f, indent=2)
+
+    # Config 4: MUVERA + MaxSim rerank (4x) via search pipeline
+    all_results.append(run_os_benchmark(client, "MUVERA + server rerank (4x)",
         lambda c, emb, sz: run_muvera_query(c, emb, sz, oversample_factor=4),
         query_data, qrels, size=args.size))
     with open(args.output, "w") as f: json.dump(all_results, f, indent=2)
