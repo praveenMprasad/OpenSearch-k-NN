@@ -194,6 +194,48 @@ def run_bm25_query(client, query_text, size=20):
               "_source": False})
 
 
+def encode_query_fde_client(multi_vectors):
+    """Encode query multi-vectors into FDE client-side (pure Python).
+    Matches MUVERA params: k_sim=4, dim_proj=16, r_reps=10, dim=128.
+    """
+    DIM = MUVERA_PARAMS["dim"]
+    K_SIM = MUVERA_PARAMS["k_sim"]
+    DIM_PROJ = MUVERA_PARAMS["dim_proj"]
+    R_REPS = MUVERA_PARAMS["r_reps"]
+    NP = 1 << K_SIM  # 16
+
+    # Use fixed seed for reproducibility (must match server-side encoder seed)
+    rng = np.random.RandomState(42)
+    simhash = rng.randn(R_REPS, K_SIM * DIM)
+    dim_reduce = np.where(rng.randint(0, 2, size=(R_REPS, DIM, DIM_PROJ)) == 1, 1.0, -1.0)
+
+    vecs = np.array(multi_vectors)
+    out = np.zeros(R_REPS * NP * DIM_PROJ, dtype=np.float32)
+    scale = 1.0 / np.sqrt(DIM_PROJ)
+    offset = 0
+    for r in range(R_REPS):
+        centroids = np.zeros((NP, DIM))
+        for v in vecs:
+            cid = 0
+            for k in range(K_SIM):
+                if np.dot(v, simhash[r, k * DIM:(k + 1) * DIM]) > 0:
+                    cid |= (1 << k)
+            centroids[cid] += v
+        for ci in range(NP):
+            out[offset:offset + DIM_PROJ] = scale * (centroids[ci] @ dim_reduce[r])
+            offset += DIM_PROJ
+    return out.tolist()
+
+
+def run_pure_fde_query(client, query_embeddings, size=20):
+    """Pure FDE ANN query — no lateInteractionScore, no search pipeline."""
+    fde = encode_query_fde_client(query_embeddings)
+    return client.transport.perform_request("POST", f"/{INDEX_NAME}/_search",
+        body={"size": size,
+              "query": {"knn": {"muvera_fde": {"vector": fde, "k": size}}},
+              "_source": False})
+
+
 def run_os_benchmark(client, config_name, query_fn, query_data, qrels,
                      size=20, k_values=(1, 5, 10, 20)):
     """Run benchmark and compute Recall@K."""
@@ -379,18 +421,23 @@ def main():
         lambda c, text, sz: run_bm25_query(c, text, sz),
         query_data, qrels, size=args.size))
 
-    # Config 2: MUVERA-only (oversample=1, no MaxSim rerank)
-    all_results.append(run_os_benchmark(client, "MUVERA-only",
+    # Config 2: Pure MUVERA FDE-only (client-side encoding, no MaxSim rerank)
+    all_results.append(run_os_benchmark(client, "MUVERA FDE-only (no rerank)",
+        lambda c, emb, sz: run_pure_fde_query(c, emb, sz),
+        query_data, qrels, size=args.size))
+
+    # Config 3: MUVERA + MaxSim rerank (1x oversample = rerank top 20)
+    all_results.append(run_os_benchmark(client, "MUVERA + rerank (1x)",
         lambda c, emb, sz: run_muvera_query(c, emb, sz, oversample_factor=1),
         query_data, qrels, size=args.size))
 
-    # Config 3: MUVERA + MaxSim rerank (4x oversample)
-    all_results.append(run_os_benchmark(client, "MUVERA + MaxSim rerank (4x)",
+    # Config 4: MUVERA + MaxSim rerank (4x oversample)
+    all_results.append(run_os_benchmark(client, "MUVERA + rerank (4x)",
         lambda c, emb, sz: run_muvera_query(c, emb, sz, oversample_factor=4),
         query_data, qrels, size=args.size))
 
-    # Config 4: MUVERA + MaxSim rerank (8x oversample)
-    all_results.append(run_os_benchmark(client, "MUVERA + MaxSim rerank (8x)",
+    # Config 5: MUVERA + MaxSim rerank (8x oversample)
+    all_results.append(run_os_benchmark(client, "MUVERA + rerank (8x)",
         lambda c, emb, sz: run_muvera_query(c, emb, sz, oversample_factor=8),
         query_data, qrels, size=args.size))
 
