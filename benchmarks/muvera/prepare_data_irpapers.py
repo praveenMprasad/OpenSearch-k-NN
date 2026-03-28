@@ -90,11 +90,19 @@ def encode_pages(model, processor, pages_ds, batch_size=4, device="cpu"):
         # Decode images from base64_str column
         images = []
         for row in batch_rows:
-            b64 = row.get("base64_str") or row.get("base64_bytes")
-            if b64:
-                img = decode_base64_image(b64)
-            else:
+            b64 = row.get("base64_str")
+            if not b64:
+                b64 = row.get("base64_bytes")
+            if not b64:
+                # Debug: print what we have
+                print(f"  WARNING: No image data. base64_str type={type(row.get('base64_str'))}, "
+                      f"len={len(str(row.get('base64_str', '')))}, "
+                      f"base64_bytes type={type(row.get('base64_bytes'))}")
                 raise ValueError(f"No image data found in row: {list(row.keys())}")
+            # Handle bytes vs string
+            if isinstance(b64, bytes):
+                b64 = b64.decode("utf-8")
+            img = decode_base64_image(b64)
             images.append(img)
 
         with torch.no_grad():

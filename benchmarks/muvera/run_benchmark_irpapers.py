@@ -187,6 +187,13 @@ def extract_ranked_list(response):
     return [(hit["_id"], hit["_score"]) for hit in response.get("hits", {}).get("hits", [])]
 
 
+def run_bm25_query(client, query_text, size=20):
+    """Run BM25 text search on the transcription field."""
+    return client.transport.perform_request("POST", f"/{INDEX_NAME}/_search",
+        body={"size": size, "query": {"match": {"text": query_text}},
+              "_source": False})
+
+
 def run_os_benchmark(client, config_name, query_fn, query_data, qrels,
                      size=20, k_values=(1, 5, 10, 20)):
     """Run benchmark and compute Recall@K."""
@@ -201,6 +208,38 @@ def run_os_benchmark(client, config_name, query_fn, query_data, qrels,
         start = time.time()
         try:
             response = query_fn(client, query_data[qid]["embeddings"], size)
+            elapsed = time.time() - start
+            latencies.append(elapsed)
+            ranked_ids = [did for did, _ in extract_ranked_list(response)]
+            for k in k_values:
+                recall_scores[k].append(compute_recall(ranked_ids, relevant_ids, k))
+        except Exception as e:
+            msg = str(e)[:200]
+            print(f"  Query {qid} failed: {msg}")
+            latencies.append(time.time() - start)
+    results = {"config": config_name, "num_queries": len(latencies)}
+    for k in k_values:
+        results[f"recall@{k}"] = np.mean(recall_scores[k]) if recall_scores[k] else 0.0
+    results["avg_latency_ms"] = np.mean(latencies) * 1000 if latencies else 0.0
+    results["p50_latency_ms"] = np.percentile(latencies, 50) * 1000 if latencies else 0.0
+    results["p95_latency_ms"] = np.percentile(latencies, 95) * 1000 if latencies else 0.0
+    return results
+
+
+def run_text_benchmark(client, config_name, query_fn, query_data, qrels,
+                       size=20, k_values=(1, 5, 10, 20)):
+    """Run benchmark using query text (not embeddings) — for BM25."""
+    print(f"\n--- Running: {config_name} ---")
+    recall_scores = {k: [] for k in k_values}
+    latencies = []
+    for qid in tqdm(sorted(query_data.keys()), desc=config_name):
+        qrel = qrels.get(qid, {})
+        if not qrel:
+            continue
+        relevant_ids = set(qrel.keys())
+        start = time.time()
+        try:
+            response = query_fn(client, query_data[qid]["text"], size)
             elapsed = time.time() - start
             latencies.append(elapsed)
             ranked_ids = [did for did, _ in extract_ranked_list(response)]
@@ -335,17 +374,22 @@ def main():
         print(f"Set ef_search={args.ef_search}")
         warmup_cache(client)
 
-    # Config 1: MUVERA-only (oversample=1, no MaxSim rerank)
+    # Config 1: BM25 text search
+    all_results.append(run_text_benchmark(client, "BM25 (text only)",
+        lambda c, text, sz: run_bm25_query(c, text, sz),
+        query_data, qrels, size=args.size))
+
+    # Config 2: MUVERA-only (oversample=1, no MaxSim rerank)
     all_results.append(run_os_benchmark(client, "MUVERA-only",
         lambda c, emb, sz: run_muvera_query(c, emb, sz, oversample_factor=1),
         query_data, qrels, size=args.size))
 
-    # Config 2: MUVERA + MaxSim rerank (4x oversample)
+    # Config 3: MUVERA + MaxSim rerank (4x oversample)
     all_results.append(run_os_benchmark(client, "MUVERA + MaxSim rerank (4x)",
         lambda c, emb, sz: run_muvera_query(c, emb, sz, oversample_factor=4),
         query_data, qrels, size=args.size))
 
-    # Config 3: MUVERA + MaxSim rerank (8x oversample)
+    # Config 4: MUVERA + MaxSim rerank (8x oversample)
     all_results.append(run_os_benchmark(client, "MUVERA + MaxSim rerank (8x)",
         lambda c, emb, sz: run_muvera_query(c, emb, sz, oversample_factor=8),
         query_data, qrels, size=args.size))
