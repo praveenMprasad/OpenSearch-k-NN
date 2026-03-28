@@ -428,6 +428,7 @@ def main():
 
     all_results = []
     all_results.append(eval_bruteforce_maxsim(ground_truth, qrels))
+    with open(args.output, "w") as f: json.dump(all_results, f, indent=2)
 
     client = create_client(args.host, args.port, args.username, args.password)
     info = client.info()
@@ -445,7 +446,7 @@ def main():
     else:
         setup_ingest_pipeline(client)
         create_index(client, ef_search=args.ef_search)
-        for osf in [1, 2, 4, 8]:
+        for osf in [1, 2, 4]:
             setup_search_pipeline(client, osf)
         index_time = index_documents(client, doc_data)
         client.indices.put_settings(index=INDEX_NAME,
@@ -457,21 +458,19 @@ def main():
     all_results.append(run_text_benchmark(client, "BM25 (text only)",
         lambda c, text, sz: run_bm25_query(c, text, sz),
         query_data, qrels, size=args.size))
+    with open(args.output, "w") as f: json.dump(all_results, f, indent=2)
 
     # Config 2: Pure MUVERA FDE-only (client-side encoding, no MaxSim rerank)
     all_results.append(run_os_benchmark(client, "MUVERA FDE-only (no rerank)",
         lambda c, emb, sz: run_pure_fde_query(c, emb, sz),
         query_data, qrels, size=args.size))
+    with open(args.output, "w") as f: json.dump(all_results, f, indent=2)
 
     # Config 3: MUVERA + MaxSim rerank (4x oversample)
     all_results.append(run_os_benchmark(client, "MUVERA + rerank (4x)",
         lambda c, emb, sz: run_muvera_query(c, emb, sz, oversample_factor=4),
         query_data, qrels, size=args.size))
-
-    # Config 5: MUVERA + MaxSim rerank (8x oversample)
-    all_results.append(run_os_benchmark(client, "MUVERA + rerank (8x)",
-        lambda c, emb, sz: run_muvera_query(c, emb, sz, oversample_factor=8),
-        query_data, qrels, size=args.size))
+    with open(args.output, "w") as f: json.dump(all_results, f, indent=2)
 
     print_results(all_results)
 
