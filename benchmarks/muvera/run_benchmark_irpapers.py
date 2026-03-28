@@ -16,10 +16,11 @@ import numpy as np
 from opensearchpy import OpenSearch, helpers
 from tqdm import tqdm
 
-# Match nfcorpus/scifact params for better quality with high-vector-count docs
-MUVERA_PARAMS = {"dim": 128, "k_sim": 5, "dim_proj": 16, "r_reps": 20}
+# Match Weaviate's MUVERA params: k_sim=4, dim_proj=16, r_reps=10
+# Their best result used ef=1024 (reranking 1024 candidates)
+MUVERA_PARAMS = {"dim": 128, "k_sim": 4, "dim_proj": 16, "r_reps": 10}
 FDE_DIM = MUVERA_PARAMS["r_reps"] * (2 ** MUVERA_PARAMS["k_sim"]) * MUVERA_PARAMS["dim_proj"]
-# 20 * 32 * 16 = 10240
+# 10 * 16 * 16 = 2560
 
 INDEX_NAME = "muvera-benchmark-irpapers"
 INGEST_PIPELINE = "muvera-ingest-irpapers"
@@ -498,13 +499,19 @@ def main():
         query_data, qrels, size=args.size))
     with open(args.output, "w") as f: json.dump(all_results, f, indent=2)
 
-    # Config 3: MUVERA FDE + client-side MaxSim rerank (4x)
+    # Config 3: MUVERA FDE + client-side MaxSim rerank (4x = 80 candidates)
     all_results.append(run_os_benchmark(client, "MUVERA + client rerank (4x)",
         lambda c, emb, sz: run_fde_with_client_rerank(c, emb, sz, prefetch_k=sz * 4),
         query_data, qrels, size=args.size))
     with open(args.output, "w") as f: json.dump(all_results, f, indent=2)
 
-    # Config 4: MUVERA + MaxSim rerank (4x) via search pipeline
+    # Config 4: MUVERA FDE + client-side MaxSim rerank (50x = ~1024 candidates, matches Weaviate ef=1024)
+    all_results.append(run_os_benchmark(client, "MUVERA + client rerank (50x, ef~1024)",
+        lambda c, emb, sz: run_fde_with_client_rerank(c, emb, sz, prefetch_k=1024),
+        query_data, qrels, size=args.size))
+    with open(args.output, "w") as f: json.dump(all_results, f, indent=2)
+
+    # Config 5: MUVERA + server rerank (4x) via search pipeline
     all_results.append(run_os_benchmark(client, "MUVERA + server rerank (4x)",
         lambda c, emb, sz: run_muvera_query(c, emb, sz, oversample_factor=4),
         query_data, qrels, size=args.size))
