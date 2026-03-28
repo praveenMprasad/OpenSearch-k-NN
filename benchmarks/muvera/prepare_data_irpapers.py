@@ -34,12 +34,12 @@ def download_irpapers():
     """Download IRPAPERS dataset from HuggingFace."""
     from datasets import load_dataset
 
-    print("Downloading IRPAPERS pages dataset...")
-    pages_ds = load_dataset("weaviate/IRPAPERS", split="train")
+    print("Downloading IRPAPERS pages (docs config)...")
+    pages_ds = load_dataset("weaviate/IRPAPERS", "docs", split="train")
     print(f"  Loaded {len(pages_ds)} pages")
 
-    print("Downloading IRPAPERS queries dataset...")
-    queries_ds = load_dataset("weaviate/irpapers-queries", split="train")
+    print("Downloading IRPAPERS queries config...")
+    queries_ds = load_dataset("weaviate/IRPAPERS", "queries", split="train")
     print(f"  Loaded {len(queries_ds)} queries")
 
     return pages_ds, queries_ds
