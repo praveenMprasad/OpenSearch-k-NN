@@ -16,10 +16,10 @@ import numpy as np
 from opensearchpy import OpenSearch, helpers
 from tqdm import tqdm
 
-# Match Weaviate's MUVERA params from the IRPAPERS paper
-MUVERA_PARAMS = {"dim": 128, "k_sim": 4, "dim_proj": 16, "r_reps": 10}
+# Match nfcorpus/scifact params for better quality with high-vector-count docs
+MUVERA_PARAMS = {"dim": 128, "k_sim": 5, "dim_proj": 16, "r_reps": 20}
 FDE_DIM = MUVERA_PARAMS["r_reps"] * (2 ** MUVERA_PARAMS["k_sim"]) * MUVERA_PARAMS["dim_proj"]
-# 10 * 16 * 16 = 2560
+# 20 * 32 * 16 = 10240
 
 INDEX_NAME = "muvera-benchmark-irpapers"
 INGEST_PIPELINE = "muvera-ingest-irpapers"
