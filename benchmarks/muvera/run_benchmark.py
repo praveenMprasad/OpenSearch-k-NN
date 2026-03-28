@@ -175,12 +175,17 @@ def encode_query_fde_client(multi_vectors):
     class JavaRandom:
         def __init__(self, seed):
             self.seed = (seed ^ 0x5DEECE66D) & ((1 << 48) - 1)
+            self._haveNextGaussian = False
+            self._nextGaussian = 0.0
         def _next(self, bits):
             self.seed = (self.seed * 0x5DEECE66D + 0xB) & ((1 << 48) - 1)
             return self.seed >> (48 - bits)
         def nextGaussian(self):
             import math
-            # Box-Muller using Java's algorithm (pairs)
+            # Java caches the second value from Box-Muller pair
+            if self._haveNextGaussian:
+                self._haveNextGaussian = False
+                return self._nextGaussian
             while True:
                 v1 = 2 * self.nextDouble() - 1
                 v2 = 2 * self.nextDouble() - 1
@@ -188,6 +193,8 @@ def encode_query_fde_client(multi_vectors):
                 if s < 1 and s != 0:
                     break
             multiplier = math.sqrt(-2 * math.log(s) / s)
+            self._nextGaussian = v2 * multiplier
+            self._haveNextGaussian = True
             return v1 * multiplier
         def nextDouble(self):
             return ((self._next(26) << 27) + self._next(27)) / (1 << 53)
