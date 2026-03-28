@@ -197,17 +197,47 @@ def run_bm25_query(client, query_text, size=20):
 def encode_query_fde_client(multi_vectors):
     """Encode query multi-vectors into FDE client-side (pure Python).
     Matches MUVERA params: k_sim=4, dim_proj=16, r_reps=10, dim=128.
+    Uses Java-compatible Random (LCG) with seed 42 to match server-side encoder.
     """
     DIM = MUVERA_PARAMS["dim"]
     K_SIM = MUVERA_PARAMS["k_sim"]
     DIM_PROJ = MUVERA_PARAMS["dim_proj"]
     R_REPS = MUVERA_PARAMS["r_reps"]
-    NP = 1 << K_SIM  # 16
+    NP = 1 << K_SIM
 
-    # Use fixed seed for reproducibility (must match server-side encoder seed)
-    rng = np.random.RandomState(42)
-    simhash = rng.randn(R_REPS, K_SIM * DIM)
-    dim_reduce = np.where(rng.randint(0, 2, size=(R_REPS, DIM, DIM_PROJ)) == 1, 1.0, -1.0)
+    class JavaRandom:
+        def __init__(self, seed):
+            self.seed = (seed ^ 0x5DEECE66D) & ((1 << 48) - 1)
+        def _next(self, bits):
+            self.seed = (self.seed * 0x5DEECE66D + 0xB) & ((1 << 48) - 1)
+            return self.seed >> (48 - bits)
+        def nextGaussian(self):
+            import math
+            while True:
+                v1 = 2 * self.nextDouble() - 1
+                v2 = 2 * self.nextDouble() - 1
+                s = v1 * v1 + v2 * v2
+                if s < 1 and s != 0:
+                    break
+            multiplier = math.sqrt(-2 * math.log(s) / s)
+            return v1 * multiplier
+        def nextDouble(self):
+            return ((self._next(26) << 27) + self._next(27)) / (1 << 53)
+        def nextBoolean(self):
+            return self._next(1) != 0
+
+    rng = JavaRandom(42)
+
+    simhash = np.zeros((R_REPS, K_SIM * DIM))
+    for r in range(R_REPS):
+        for i in range(K_SIM * DIM):
+            simhash[r][i] = rng.nextGaussian()
+
+    dim_reduce = np.zeros((R_REPS, DIM, DIM_PROJ))
+    for r in range(R_REPS):
+        for i in range(DIM):
+            for j in range(DIM_PROJ):
+                dim_reduce[r][i][j] = 1.0 if rng.nextBoolean() else -1.0
 
     vecs = np.array(multi_vectors)
     out = np.zeros(R_REPS * NP * DIM_PROJ, dtype=np.float32)
@@ -426,12 +456,7 @@ def main():
         lambda c, emb, sz: run_pure_fde_query(c, emb, sz),
         query_data, qrels, size=args.size))
 
-    # Config 3: MUVERA + MaxSim rerank (1x oversample = rerank top 20)
-    all_results.append(run_os_benchmark(client, "MUVERA + rerank (1x)",
-        lambda c, emb, sz: run_muvera_query(c, emb, sz, oversample_factor=1),
-        query_data, qrels, size=args.size))
-
-    # Config 4: MUVERA + MaxSim rerank (4x oversample)
+    # Config 3: MUVERA + MaxSim rerank (4x oversample)
     all_results.append(run_os_benchmark(client, "MUVERA + rerank (4x)",
         lambda c, emb, sz: run_muvera_query(c, emb, sz, oversample_factor=4),
         query_data, qrels, size=args.size))
