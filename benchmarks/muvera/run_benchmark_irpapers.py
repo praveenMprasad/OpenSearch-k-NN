@@ -505,11 +505,17 @@ def main():
         query_data, qrels, size=args.size))
     with open(args.output, "w") as f: json.dump(all_results, f, indent=2)
 
-    # Config 4: MUVERA FDE + client-side MaxSim rerank (50x = ~1024 candidates, matches Weaviate ef=1024)
-    all_results.append(run_os_benchmark(client, "MUVERA + client rerank (50x, ef~1024)",
-        lambda c, emb, sz: run_fde_with_client_rerank(c, emb, sz, prefetch_k=1024),
+    # Config 4: MUVERA FDE + client-side MaxSim rerank (100 candidates, ef_search=1024)
+    print("\nSetting ef_search=1024 for high-recall FDE retrieval...")
+    client.indices.put_settings(index=INDEX_NAME,
+        body={"index.knn.algo_param.ef_search": 1024})
+    all_results.append(run_os_benchmark(client, "MUVERA + client rerank (k=100, ef=1024)",
+        lambda c, emb, sz: run_fde_with_client_rerank(c, emb, sz, prefetch_k=100),
         query_data, qrels, size=args.size))
     with open(args.output, "w") as f: json.dump(all_results, f, indent=2)
+    # Restore ef_search
+    client.indices.put_settings(index=INDEX_NAME,
+        body={"index.knn.algo_param.ef_search": args.ef_search})
 
     # Config 5: MUVERA + server rerank (4x) via search pipeline
     all_results.append(run_os_benchmark(client, "MUVERA + server rerank (4x)",
