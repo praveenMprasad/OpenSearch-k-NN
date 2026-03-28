@@ -16,11 +16,11 @@ import numpy as np
 from opensearchpy import OpenSearch, helpers
 from tqdm import tqdm
 
-# Match Weaviate's MUVERA params: k_sim=4, dim_proj=16, r_reps=10
-# Their best result used ef=1024 (reranking 1024 candidates)
-MUVERA_PARAMS = {"dim": 128, "k_sim": 4, "dim_proj": 16, "r_reps": 10}
+# k_sim=5 for better quality with high-vector-count docs (1000 vecs/page)
+# FDE dim = 20 * 32 * 16 = 10,240 (same as nfcorpus/scifact)
+MUVERA_PARAMS = {"dim": 128, "k_sim": 5, "dim_proj": 16, "r_reps": 20}
 FDE_DIM = MUVERA_PARAMS["r_reps"] * (2 ** MUVERA_PARAMS["k_sim"]) * MUVERA_PARAMS["dim_proj"]
-# 10 * 16 * 16 = 2560
+# 20 * 32 * 16 = 10240
 
 INDEX_NAME = "muvera-benchmark-irpapers"
 INGEST_PIPELINE = "muvera-ingest-irpapers"
