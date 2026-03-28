@@ -77,24 +77,22 @@ def encode_pages(model, processor, pages_ds, batch_size=4, device="cpu"):
     page_texts = []
 
     # Build page ID list and extract metadata
+    # IRPAPERS columns: pdf_id_x, pdf_name, page_number, base64_str, transcription, ...
     for i, row in enumerate(pages_ds):
-        # Use paper_id + page_number as unique ID, or fallback to index
-        pid = row.get("page_id") or row.get("id") or f"page_{i}"
+        pid = f"{row['pdf_id_x']}_{row['page_number']}"
         page_ids.append(str(pid))
-        page_texts.append(row.get("text", row.get("ocr_text", "")))
+        page_texts.append(row.get("transcription", ""))
 
     for i in tqdm(range(0, len(pages_ds), batch_size), desc="Encoding pages"):
         batch_rows = [pages_ds[j] for j in range(i, min(i + batch_size, len(pages_ds)))]
         batch_ids = page_ids[i : i + batch_size]
 
-        # Decode images from base64 or use image column directly
+        # Decode images from base64_str column
         images = []
         for row in batch_rows:
-            if "base64" in row and row["base64"]:
-                img = decode_base64_image(row["base64"])
-            elif "image" in row and row["image"] is not None:
-                img = row["image"] if isinstance(row["image"], Image.Image) else Image.open(row["image"])
-                img = img.convert("RGB")
+            b64 = row.get("base64_str") or row.get("base64_bytes")
+            if b64:
+                img = decode_base64_image(b64)
             else:
                 raise ValueError(f"No image data found in row: {list(row.keys())}")
             images.append(img)
@@ -168,22 +166,26 @@ def build_qrels(queries_ds, page_ids):
     IRPAPERS uses needle-in-the-haystack: each query has exactly one relevant page.
     The relevance label is binary (1 = relevant).
     """
+    page_id_set = set(page_ids)
     qrels = {}
     for i, row in enumerate(queries_ds):
         qid = str(row.get("query_id") or row.get("id") or f"q_{i}")
-        # The relevant page ID - try various column names
-        relevant_page = row.get("relevant_page_id") or row.get("page_id") or row.get("gold_page_id")
-        if relevant_page is not None:
-            qrels[qid] = {str(relevant_page): 1}
-        else:
-            # Try to find it from other fields
-            for key in row.keys():
-                if "page" in key.lower() or "doc" in key.lower() or "relevant" in key.lower():
-                    val = row[key]
-                    if val is not None and str(val) in page_ids:
-                        qrels[qid] = {str(val): 1}
-                        break
-    print(f"  Built qrels for {len(qrels)} queries")
+        # Try to construct the page ID the same way as encode_pages
+        pdf_id = row.get("pdf_id_x") or row.get("pdf_id")
+        page_num = row.get("page_number")
+        if pdf_id is not None and page_num is not None:
+            relevant_page = f"{pdf_id}_{page_num}"
+            if relevant_page in page_id_set:
+                qrels[qid] = {relevant_page: 1}
+                continue
+        # Fallback: try any column that looks like a page reference
+        for key in row.keys():
+            if "page" in key.lower() or "doc" in key.lower() or "relevant" in key.lower():
+                val = row[key]
+                if val is not None and str(val) in page_id_set:
+                    qrels[qid] = {str(val): 1}
+                    break
+    print(f"  Built qrels for {len(qrels)} / {len(queries_ds)} queries")
     return qrels
 
 
@@ -272,6 +274,8 @@ def main():
     # Inspect dataset columns
     print(f"  Page columns: {pages_ds.column_names}")
     print(f"  Query columns: {queries_ds.column_names}")
+    print(f"  Sample page row keys: {list(pages_ds[0].keys())}")
+    print(f"  Sample query row keys: {list(queries_ds[0].keys())}")
 
     model, processor = load_colmodernvbert(device=args.device)
 
