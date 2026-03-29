@@ -13,6 +13,7 @@ ANN retrieval while preserving multi-vector quality.
 |---------|-------|------|---------|-----------------|-----|
 | nfcorpus | ColBERTv2 | 3,633 | 323 | ~30 | 128 |
 | SciFact | ColBERTv2 | 5,183 | 300 | ~30 | 128 |
+| IRPAPERS | ColModernVBERT | 3,230 | 180 | ~1,011 | 128 |
 
 ## MUVERA Parameters (nfcorpus / SciFact)
 
@@ -67,6 +68,43 @@ ANN retrieval while preserving multi-vector quality.
 | MUVERA + rerank (4x) | FDE ANN → top 40 candidates → MaxSim rerank → top 10 |
 | MUVERA FDE-only | Client-side FDE encoding → KNN on FDE field → top 10 (no MaxSim) |
 | Mean pool + rerank | Mean-pool query → KNN on mean vector (k=100) → MaxSim rerank → top 10 |
+
+## Results: IRPAPERS (3,230 pages, 180 queries, ColModernVBERT)
+
+IRPAPERS is a visual document benchmark of 166 IR papers (3,230 pages) with 180
+needle-in-the-haystack queries. ColModernVBERT encodes page images into ~1,011
+multi-vectors per page. Metric is Recall@K (single relevance per query).
+
+MUVERA params: k_sim=5, dim_proj=16, r_reps=20, FDE dim=10,240.
+
+| Approach | R@1 | R@5 | R@10 | R@20 | % of Exact (R@1) | Avg Latency |
+|----------|-----|-----|------|------|-------------------|-------------|
+| Exact MaxSim (brute-force) | 40.6% | 76.7% | 83.9% | 89.4% | 100% | offline |
+| MUVERA + MaxSim rerank (4x) | 37.2% | 66.7% | 73.3% | 78.3% | 91.7% | 34,431ms |
+| MUVERA FDE-only (no rerank) | 1.1% | 5.6% | 8.3% | 12.2% | 2.7% | 86ms |
+| BM25 (text only) | 47.8% | 80.6% | 88.3% | 93.3% | — | 9ms |
+
+### Weaviate Reference (IRPAPERS paper)
+
+| Approach | R@1 | R@5 | R@20 |
+|----------|-----|-----|------|
+| ColModernVBERT (exact multi-vector) | 43% | 78% | 93% |
+| ColModernVBERT + MUVERA (ef=1024) | 41% | 75% | 88% |
+| ColModernVBERT + MUVERA (ef=512) | 37% | 68% | 78% |
+| Hybrid Text (Arctic 2.0 + BM25) | 46% | 78% | 91% |
+| Multimodal Hybrid (text + image) | 49% | 81% | 95% |
+
+### IRPAPERS Observations
+
+- **MUVERA + rerank (4x) recovers 91.7% of exact MaxSim at R@1** — comparable to
+  Weaviate's MUVERA (ef=512) result of 37% R@1.
+- **FDE-only is very poor (1.1% R@1)** on this dataset because each page has ~1,011
+  multi-vectors. With 32 clusters (k_sim=5), each cluster averages ~31 vectors —
+  too much information loss for the FDE approximation alone.
+- **BM25 outperforms exact MaxSim** (47.8% vs 40.6% R@1) on IRPAPERS, showing that
+  text search is strong for queries about IR paper content.
+- The high latency (34s) for MUVERA+rerank is due to lateInteractionScore computing
+  MaxSim over ~1,000 vectors per candidate page.
 
 ## Reproducibility
 
