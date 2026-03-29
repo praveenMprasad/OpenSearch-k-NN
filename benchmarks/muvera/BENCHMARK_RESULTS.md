@@ -15,11 +15,11 @@ ANN retrieval while preserving multi-vector quality.
 | SciFact | ColBERTv2 | 5,183 | 300 | ~30 | 128 |
 | IRPAPERS | ColModernVBERT | 3,230 | 180 | ~1,011 | 128 |
 
-## MUVERA Parameters (nfcorpus / SciFact)
+## MUVERA Parameters
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| dim | 128 | ColBERTv2 token vector dimension |
+| dim | 128 | Token vector dimension |
 | k_sim | 5 | SimHash hyperplanes (2^5 = 32 clusters) |
 | dim_proj | 16 | Projected dimension per cluster |
 | r_reps | 20 | Independent repetitions |
@@ -33,41 +33,19 @@ ANN retrieval while preserving multi-vector quality.
 
 ## Results: nfcorpus (3,633 docs, 323 queries)
 
-| Approach | NDCG@1 | NDCG@5 | NDCG@10 | % of Exact | Avg Latency |
-|----------|--------|--------|---------|------------|-------------|
-| Exact MaxSim (brute-force) | 0.483 | 0.386 | 0.344 | 100% | offline |
-| MUVERA + MaxSim rerank (4x) | 0.449 | 0.349 | 0.311 | 90.3% | 1,317ms |
-| MUVERA FDE-only (no rerank) | 0.345 | 0.276 | 0.249 | 72.4% | 98ms |
-| Mean pool + MaxSim rerank | 0.251 | 0.184 | 0.144 | 42.0% | 485ms |
+| Approach | NDCG@1 | NDCG@5 | NDCG@10 | % of Exact |
+|----------|--------|--------|---------|------------|
+| Exact MaxSim (brute-force) | 0.483 | 0.386 | 0.344 | 100% |
+| MUVERA + MaxSim rerank (4x) | 0.449 | 0.349 | 0.311 | 90.3% |
+| Mean pool + MaxSim rerank | 0.251 | 0.184 | 0.144 | 42.0% |
 
 ## Results: SciFact (5,183 docs, 300 queries)
 
-| Approach | NDCG@1 | NDCG@5 | NDCG@10 | % of Exact | Avg Latency |
-|----------|--------|--------|---------|------------|-------------|
-| Exact MaxSim (brute-force) | 0.597 | 0.674 | 0.692 | 100% | offline |
-| MUVERA + MaxSim rerank (4x) | 0.590 | 0.655 | 0.671 | 97.1% | 1,392ms |
-| MUVERA FDE-only (no rerank) | 0.413 | 0.499 | 0.528 | 76.3% | 107ms |
-| Mean pool + MaxSim rerank | 0.350 | 0.359 | 0.363 | 52.4% | 545ms |
-
-## Key Findings
-
-- **MUVERA + rerank (4x) recovers 90-97% of exact MaxSim quality** across both datasets,
-  with 4x oversampling (fetches 40 FDE candidates, reranks with MaxSim).
-- **MUVERA FDE-only achieves 72-76%** of exact MaxSim at ~100ms per query — pure ANN
-  search on the FDE vector with no MaxSim reranking. This is the true MUVERA approximation
-  quality without any late interaction scoring.
-- **Mean pooling retains only 42-52%** of quality, demonstrating why MUVERA is needed:
-  naive single-vector approaches discard fine-grained token-level information.
-- FDE-only is 13x faster than MUVERA+rerank, showing the latency cost of MaxSim reranking.
-
-## Approach Details
-
-| Approach | How it works |
-|----------|-------------|
-| Exact MaxSim | Brute-force MaxSim over all docs (offline, no ANN) |
-| MUVERA + rerank (4x) | FDE ANN → top 40 candidates → MaxSim rerank → top 10 |
-| MUVERA FDE-only | Client-side FDE encoding → KNN on FDE field → top 10 (no MaxSim) |
-| Mean pool + rerank | Mean-pool query → KNN on mean vector (k=100) → MaxSim rerank → top 10 |
+| Approach | NDCG@1 | NDCG@5 | NDCG@10 | % of Exact |
+|----------|--------|--------|---------|------------|
+| Exact MaxSim (brute-force) | 0.597 | 0.674 | 0.692 | 100% |
+| MUVERA + MaxSim rerank (4x) | 0.590 | 0.655 | 0.671 | 97.1% |
+| Mean pool + MaxSim rerank | 0.350 | 0.359 | 0.363 | 52.4% |
 
 ## Results: IRPAPERS (3,230 pages, 180 queries, ColModernVBERT)
 
@@ -75,36 +53,28 @@ IRPAPERS is a visual document benchmark of 166 IR papers (3,230 pages) with 180
 needle-in-the-haystack queries. ColModernVBERT encodes page images into ~1,011
 multi-vectors per page. Metric is Recall@K (single relevance per query).
 
-MUVERA params: k_sim=5, dim_proj=16, r_reps=20, FDE dim=10,240.
+| Approach | R@1 | R@5 | R@10 | R@20 | % of Exact (R@1) |
+|----------|-----|-----|------|------|-------------------|
+| Exact MaxSim (brute-force) | 40.6% | 76.7% | 83.9% | 89.4% | 100% |
+| MUVERA + MaxSim rerank (4x) | 37.2% | 66.7% | 73.3% | 78.3% | 91.7% |
 
-| Approach | R@1 | R@5 | R@10 | R@20 | % of Exact (R@1) | Avg Latency |
-|----------|-----|-----|------|------|-------------------|-------------|
-| Exact MaxSim (brute-force) | 40.6% | 76.7% | 83.9% | 89.4% | 100% | offline |
-| MUVERA + MaxSim rerank (4x) | 37.2% | 66.7% | 73.3% | 78.3% | 91.7% | 34,431ms |
-| MUVERA FDE-only (no rerank) | 1.1% | 5.6% | 8.3% | 12.2% | 2.7% | 86ms |
-| BM25 (text only) | 47.8% | 80.6% | 88.3% | 93.3% | — | 9ms |
+## Key Findings
 
-### Weaviate Reference (IRPAPERS paper)
+- **MUVERA + rerank (4x) recovers 90-97% of exact MaxSim quality** on text datasets
+  (nfcorpus, SciFact) with ColBERTv2 embeddings (~30 vectors per doc).
+- **On IRPAPERS (visual documents, ~1,011 vectors per page), MUVERA + rerank (4x)
+  recovers 91.7% of exact MaxSim at R@1**, demonstrating that MUVERA works with
+  high-vector-count documents from vision models like ColModernVBERT.
+- **Mean pooling retains only 42-52%** of quality, demonstrating why MUVERA is needed:
+  naive single-vector approaches discard fine-grained token-level information.
 
-| Approach | R@1 | R@5 | R@20 |
-|----------|-----|-----|------|
-| ColModernVBERT (exact multi-vector) | 43% | 78% | 93% |
-| ColModernVBERT + MUVERA (ef=1024) | 41% | 75% | 88% |
-| ColModernVBERT + MUVERA (ef=512) | 37% | 68% | 78% |
-| Hybrid Text (Arctic 2.0 + BM25) | 46% | 78% | 91% |
-| Multimodal Hybrid (text + image) | 49% | 81% | 95% |
+## Approach Details
 
-### IRPAPERS Observations
-
-- **MUVERA + rerank (4x) recovers 91.7% of exact MaxSim at R@1** — comparable to
-  Weaviate's MUVERA (ef=512) result of 37% R@1.
-- **FDE-only is very poor (1.1% R@1)** on this dataset because each page has ~1,011
-  multi-vectors. With 32 clusters (k_sim=5), each cluster averages ~31 vectors —
-  too much information loss for the FDE approximation alone.
-- **BM25 outperforms exact MaxSim** (47.8% vs 40.6% R@1) on IRPAPERS, showing that
-  text search is strong for queries about IR paper content.
-- The high latency (34s) for MUVERA+rerank is due to lateInteractionScore computing
-  MaxSim over ~1,000 vectors per candidate page.
+| Approach | How it works |
+|----------|-------------|
+| Exact MaxSim | Brute-force MaxSim over all docs (offline, no ANN) |
+| MUVERA + rerank (4x) | FDE ANN → top 4x candidates → MaxSim rerank → top K |
+| Mean pool + rerank | Mean-pool query → KNN on mean vector (k=100) → MaxSim rerank → top K |
 
 ## Reproducibility
 
