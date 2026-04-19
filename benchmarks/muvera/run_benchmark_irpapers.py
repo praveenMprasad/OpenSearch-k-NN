@@ -76,8 +76,7 @@ def setup_search_pipeline(client, oversample_factor):
         "request_processors": [{"muvera_query": {
             "target_field": "muvera_fde", "dim": MUVERA_PARAMS["dim"],
             "k_sim": MUVERA_PARAMS["k_sim"], "dim_proj": MUVERA_PARAMS["dim_proj"],
-            "r_reps": MUVERA_PARAMS["r_reps"], "fde_dimension": FDE_DIM,
-            "oversample_factor": oversample_factor}}]})
+            "r_reps": MUVERA_PARAMS["r_reps"], "fde_dimension": FDE_DIM}}]})
     print(f"Created search pipeline: {name}")
 
 
@@ -152,11 +151,17 @@ def warmup_cache(client):
                 pass
 
 
-def build_muvera_query(query_embeddings, size=20):
-    """Build MUVERA query with lateInteractionScore reranking."""
-    return {"size": size, "query": {"script_score": {"query": {"match_all": {}},
+def build_muvera_query(query_embeddings, size=20, prefetch_k=None):
+    """Build MUVERA template query with lateInteractionScore reranking.
+    The ${muvera_fde} placeholder is resolved by the search request processor
+    from the PipelineProcessingContext attribute at query rewrite time.
+    """
+    if prefetch_k is None:
+        prefetch_k = size
+    return {"size": size, "query": {"template": {"script_score": {
+        "query": {"knn": {"muvera_fde": {"vector": "${muvera_fde}", "k": prefetch_k}}},
         "script": {"source": "lateInteractionScore(params.query_vectors, 'colbert_vectors', params._source, params.space_type)",
-                   "params": {"query_vectors": query_embeddings, "space_type": "innerproduct"}}}},
+                   "params": {"query_vectors": query_embeddings, "space_type": "innerproduct"}}}}},
         "_source": {"excludes": ["muvera_fde", "mean_vector"]}}
 
 
@@ -174,9 +179,10 @@ def build_mean_pool_rerank_query(query_embeddings, size=20, prefetch_k=100):
 
 def run_muvera_query(client, query_embeddings, size, oversample_factor):
     name = f"{SEARCH_PIPELINE}-os{oversample_factor}"
+    prefetch_k = min(size * oversample_factor, 10_000)
     return client.transport.perform_request("POST",
         f"/{INDEX_NAME}/_search?search_pipeline={name}",
-        body=build_muvera_query(query_embeddings, size))
+        body=build_muvera_query(query_embeddings, size, prefetch_k))
 
 
 def run_mean_pool_rerank_query(client, query_embeddings, size, prefetch_k=100):
